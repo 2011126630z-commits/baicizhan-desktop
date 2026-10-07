@@ -69,9 +69,16 @@ npm run tauri build
 
 产物位于 `src-tauri/target/release/bundle/`：
 - `nsis/BaicizhanDesktop_0.1.0_x64-setup.exe`（NSIS 安装包，拷贝到 `releases/BaicizhanDesktop_Setup_x64.exe`）
-- `msi/BaicizhanDesktop_0.1.0_x64_zh-CN.msi`
+- `msi/BaicizhanDesktop_0.1.0_x64_zh-CN.msi`（需要 WiX 工具链，联网自动下载）
 
 安装后：开始菜单与桌面创建「BaicizhanDesktop」快捷方式，按用户级安装（无需管理员）。
+
+> 网络访问 GitHub 受限时，NSIS 打包工具可能下载超时：
+> 先运行 `powershell -ExecutionPolicy Bypass -File scripts\fix-nsis-cache.ps1` 恢复工具缓存再打包。
+
+## 发布到 GitHub
+
+见 [docs/RELEASE-GUIDE.md](docs/RELEASE-GUIDE.md)（需要你本人完成一次 GitHub 设备授权，其余自动完成）。
 
 ## 目录结构
 
