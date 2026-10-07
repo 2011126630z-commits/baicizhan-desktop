@@ -23,9 +23,9 @@ function Bootstrap() {
         const today = await api.statsToday();
         const target = parseInt(useSettings.getState().get("study.dailyNew", "20"), 10) || 20;
         useStudy.setState({ learnedToday: today.learned, reviewedToday: today.reviewed, target });
-        const raw = useSettings.getState().map["sync.lastSyncAt"];
-        const v = raw ? parseInt(raw, 10) : 0;
-        useSync.getState().setLastSyncAt(v > 0 ? v * 1000 : null);
+        const rawSyncAt = useSettings.getState().map["official.syncAt"];
+        const v = rawSyncAt ? parseInt(rawSyncAt, 10) : 0;
+        useSync.getState().setOfficialSyncAt(v > 0 ? v * 1000 : null);
         // 后台同步（不阻塞 UI）
         syncManager.start();
       } catch (e) {

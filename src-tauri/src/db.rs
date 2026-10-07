@@ -157,6 +157,11 @@ CREATE TABLE IF NOT EXISTS op_queue (
   note TEXT,
   created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS official_cache (
+  key TEXT PRIMARY KEY,
+  payload TEXT NOT NULL,
+  synced_at INTEGER NOT NULL
+);
 "#;
 
 // 所有查询一律使用 rusqlite params! 宏参数绑定，不拼接 SQL。

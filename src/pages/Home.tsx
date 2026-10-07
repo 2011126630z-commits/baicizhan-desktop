@@ -7,6 +7,7 @@ import { useSettings } from "../stores/settings";
 import { useStudy } from "../stores/study";
 import { useSync } from "../stores/sync";
 import { AuthService } from "../services/auth/AuthService";
+import { syncManager } from "../services/sync/SyncManager";
 import { toast } from "../stores/toast";
 import { EmptyState, ProgressRing } from "../components/ui";
 import { fmtDateCN, fmtMinutes, greeting } from "../utils/time";
@@ -16,6 +17,7 @@ import { UNSUPPORTED_WRITE_NOTE } from "../adapters/types";
 export function HomePage() {
   const navigate = useNavigate();
   const sessionState = useAuth((s) => s.sessionState);
+  const sessionNote = useAuth((s) => s.sessionNote);
   const bootstrapped = useSync((s) => s.bootstrapped);
   const nickname = useSettings((s) => s.map["account.nickname"] ?? "");
   const [today, setToday] = useState({ learned: 0, reviewed: 0, minutes: 0 });
@@ -74,7 +76,25 @@ export function HomePage() {
 
       {sessionState === "expired" && (
         <div className="banner warn">
-          <span>登录状态已失效，请重新登录以恢复官方数据同步。</span>
+          <span>百词斩登录状态已失效，请重新登录；本地学习数据不受影响。</span>
+          <button className="btn" style={{ marginLeft: "auto" }} onClick={() => void AuthService.openOfficialLoginPage()}>
+            重新登录
+          </button>
+        </div>
+      )}
+
+      {sessionState === "captured" && (
+        <div className="banner info">
+          <span>已捕获百词斩会话，但尚未通过官方页面验证账号身份（{sessionNote || "会话待验证"}）。</span>
+          <button className="btn" style={{ marginLeft: "auto" }} onClick={() => void syncManager.reverifySession()}>
+            立即验证
+          </button>
+        </div>
+      )}
+
+      {sessionState === "verification_failed" && (
+        <div className="banner warn">
+          <span>当前会话无法验证为已登录的百词斩账号：{sessionNote || "身份未验证"}。</span>
           <button className="btn" style={{ marginLeft: "auto" }} onClick={() => void AuthService.openOfficialLoginPage()}>
             重新登录
           </button>

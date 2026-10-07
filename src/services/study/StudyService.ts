@@ -80,7 +80,7 @@ export const StudyService = {
       source: "local",
     }));
     return api.bookImport({
-      book: { id: bookId, name: bookName, source: "local", total: words.length, active: 1 },
+      book: { id: bookId, name: bookName, source: "imported", total: words.length, active: 1 },
       words,
     });
   },

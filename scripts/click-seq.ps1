@@ -21,9 +21,7 @@ $p = Get-Process baicizhan-desktop -ErrorAction SilentlyContinue | Where-Object 
 if (-not $p) { Write-Output "NO_PROC"; exit 1 }
 $h = $p.MainWindowHandle
 
-# 先按一次 ALT（模拟用户输入，解除前台锁定），再最大化 + 置顶
-[WinClk2]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
-[WinClk2]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
+# 激活主窗口（不再发送任何前置按键，避免触发应用快捷键）
 [WinClk2]::ShowWindow($h, 3) | Out-Null
 [WinClk2]::SetForegroundWindow($h) | Out-Null
 [WinClk2]::SetWindowPos($h, [IntPtr]::new(-1), 0, 0, 0, 0, 0x0003) | Out-Null  # TOPMOST + NOSIZE
@@ -38,7 +36,10 @@ foreach ($pair in $Clicks.Split(";")) {
   Start-Sleep -Milliseconds 800
 }
 if ($Keys -ne "") {
-  Start-Sleep -Milliseconds 300
+  # 键盘输入需要真正的焦点：用 AppActivate 按 PID 激活（比 SetForegroundWindow 更可靠）
+  $wshell = New-Object -ComObject WScript.Shell
+  $null = $wshell.AppActivate([int]$p.Id)
+  Start-Sleep -Milliseconds 600
   [System.Windows.Forms.SendKeys]::SendWait($Keys)
   Start-Sleep -Milliseconds 500
 }

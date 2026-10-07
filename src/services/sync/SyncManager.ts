@@ -9,8 +9,11 @@ import { localAdapter } from "../../adapters/LocalAdapter";
 import { detectCapabilities, shouldRunDetection } from "./CapabilityDetector";
 
 /**
- * SyncManager：登录校验、能力检测、数据同步、操作队列的唯一入口。
- * 策略：启动后先显示本地缓存，后台静默同步；失败不阻塞 UI，可重试。
+ * SyncManager（0.2.0）：
+ * - 会话状态一律来自真实 SessionProbe（绝不凭 Cookie 数量或 HTTP 200 判定登录）；
+ * - 操作队列按类型（study_record / favorite）分批处理，各自独立标记状态；
+ * - 只有官方渠道真正读写成功才更新时间戳并显示“已同步”，否则如实显示“暂不可用”；
+ * - 本地数据始终实时保存，与官方状态严格分开展示。
  */
 class SyncManager {
   private started = false;
@@ -18,7 +21,7 @@ class SyncManager {
   private timer: number | null = null;
   private official = new OfficialWebAdapter(
     () => useSync.getState().capabilities,
-    () => useAuth.getState().sessionState === "logged_in",
+    () => useAuth.getState().sessionState,
   );
 
   start() {
@@ -35,8 +38,10 @@ class SyncManager {
     });
     useSync.getState().setOnline(navigator.onLine);
     useSync.getState().loadCapabilities(useSettings.getState().map["capabilities.report"] ?? null);
+    const rawSyncAt = useSettings.getState().map["official.syncAt"];
+    const v = rawSyncAt ? parseInt(rawSyncAt, 10) : 0;
+    useSync.getState().setOfficialSyncAt(v > 0 ? v * 1000 : null);
 
-    // 启动 1.5s 后台同步，不阻塞首屏；之后每分钟检查是否到达同步间隔
     window.setTimeout(() => void this.syncAll("auto"), 1500);
     this.timer = window.setInterval(() => {
       if (this.syncing) return;
@@ -63,40 +68,68 @@ class SyncManager {
     const sync = useSync.getState();
     sync.setRunning(true);
     sync.setLastAttemptAt(Date.now());
-    let overall: OverallSyncState = "ok";
+    let overall: OverallSyncState = "local";
 
     try {
-      // 1. 会话有效性（只探测，绝不自动重登，避免无限循环）
+      // 0) 本地数据摘要（实时、真实）
+      try {
+        const summary = await api.localDataSummary();
+        sync.setLocalSummary(summary);
+      } catch {
+        /* 摘要失败不影响主流程 */
+      }
+
+      // 1) 会话：有会话则执行真实验证（SessionProbe），无会话则本地模式
+      const auth = useAuth.getState();
       const exists = await api.sessionExists();
-      let logged = false;
       if (!exists) {
-        useAuth.getState().setSession("logged_out");
+        auth.setSession("logged_out", "未登录：本地数据正常保存");
         sync.setDomain("session", { status: "pending", note: "未登录：使用本地模式" });
-        for (const k of ["profile", "currentBook", "studyPlan", "dailyProgress", "reviewWords", "writeback"] as DomainKey[]) {
+        for (const k of [
+          "profile",
+          "currentBook",
+          "studyPlan",
+          "dailyProgress",
+          "reviewWords",
+          "writeback",
+        ] as DomainKey[]) {
           sync.setDomain(k, { status: "unsupported", note: "未登录，官方数据不可用" });
         }
         overall = "local";
       } else {
-        const probe = await this.official.probeSession();
-        if (probe.ok) {
-          useAuth.getState().setSession("logged_in");
-          logged = true;
-          sync.setDomain("session", { status: "synced", note: "官方登录会话有效" });
-        } else if (probe.expired) {
-          useAuth.getState().setSession("expired");
+        if (auth.sessionState !== "logged_in" || trigger === "manual") {
+          const probe = await auth.verifySession();
+          if (probe?.verdict === "offline") {
+            overall = "offline";
+            sync.setOnline(false);
+          }
+        }
+        const now = useAuth.getState().sessionState;
+        if (now === "logged_in") {
+          sync.setDomain("session", { status: "synced", note: "会话已通过官方页面验证" });
+          overall = "account_ok";
+        } else if (now === "captured") {
+          sync.setDomain("session", {
+            status: "pending",
+            note: "会话已捕获，官方页面未提供身份标记（身份未验证）",
+          });
+          overall = "account_ok";
+        } else if (now === "offline") {
+          sync.setDomain("session", { status: "failed", note: "离线：无法验证会话（不等于失效）" });
+          overall = "offline";
+        } else if (now === "expired") {
           sync.setDomain("session", { status: "failed", note: "登录状态已失效，请重新登录" });
           overall = "error";
-        } else if (probe.offline) {
-          sync.setDomain("session", { status: "failed", note: "当前离线 · 显示上次同步内容" });
-          sync.setOnline(false);
-          overall = "offline";
         } else {
-          sync.setDomain("session", { status: "failed", note: probe.note ?? "会话探测失败" });
+          sync.setDomain("session", {
+            status: "failed",
+            note: useAuth.getState().sessionNote || "会话验证失败",
+          });
           overall = "error";
         }
       }
 
-      // 2. 能力检测（24h 一次或失败重测；离线时跳过）
+      // 2) 能力检测（仅在会话验证通过后执行真实检测；其余状态如实标记）
       if (overall !== "offline" && (await shouldRunDetection())) {
         try {
           await detectCapabilities();
@@ -105,75 +138,41 @@ class SyncManager {
         }
       }
 
-      // 3. 数据域同步（能力门控：未开放的能力诚实标注）
+      // 3) 数据域状态（来源：能力报告 + 本地事实）
       const caps = useSync.getState().capabilities;
-
-      const gate = (supported: boolean, unverifiedNote: string) =>
-        !logged
-          ? { status: "unsupported" as const, note: "未登录，官方数据不可用" }
-          : !caps
-            ? { status: "pending" as const, note: "尚未完成能力检测" }
-            : supported
-              ? null
-              : { status: "pending" as const, note: unverifiedNote };
-
-      // profile
-      try {
-        const r = await localAdapter.fetchProfile();
-        void r;
-        const g = gate(true, "");
-        sync.setDomain("profile", g ?? { status: "pending", note: "官方渠道暂无公开接口，昵称为本地设置" });
-      } catch {
-        sync.setDomain("profile", { status: "failed", note: "获取失败" });
-      }
-
-      // currentBook
-      try {
-        const r = await this.official.fetchCurrentBook();
-        sync.setDomain("currentBook", { status: r.status, note: r.note ?? "词书来自本地数据库" });
-      } catch {
-        sync.setDomain("currentBook", { status: "failed", note: "获取失败" });
-      }
-
-      // studyPlan
-      try {
-        const r = await this.official.fetchTodayPlan();
-        sync.setDomain("studyPlan", { status: r.status, note: r.note ?? "学习计划为本地计划" });
-      } catch {
-        sync.setDomain("studyPlan", { status: "failed", note: "获取失败" });
-      }
-
-      // dailyProgress / reviewWords
-      try {
-        const r = await this.official.fetchDailyProgress();
-        sync.setDomain("dailyProgress", { status: r.status, note: r.note ?? "进度来自本地记录" });
-      } catch {
-        sync.setDomain("dailyProgress", { status: "failed", note: "获取失败" });
-      }
-      try {
-        const r = await this.official.fetchReviewWords();
-        sync.setDomain("reviewWords", { status: r.status, note: r.note ?? "复习队列为本地算法生成" });
-      } catch {
-        sync.setDomain("reviewWords", { status: "failed", note: "获取失败" });
-      }
-
-      // learnedWords / studyHistory：本地永远完整
+      const setDomainFromCaps = (key: DomainKey, capKey: keyof NonNullable<typeof caps>["items"], localNote: string) => {
+        const item = caps?.items[capKey];
+        if (item?.status === "available") {
+          sync.setDomain(key, { status: "pending", note: "能力可用，等待接入（见 official-web-capabilities.md）" });
+        } else {
+          sync.setDomain(key, {
+            status: item?.status === "failed" ? "failed" : "unsupported",
+            note: item?.note ?? localNote,
+          });
+        }
+      };
+      setDomainFromCaps("profile", "userProfile", "账号信息暂无官方渠道，昵称为本地设置");
+      setDomainFromCaps("currentBook", "currentBook", "词书来自本地数据库");
+      setDomainFromCaps("studyPlan", "studyPlan", "学习计划为本地设置");
+      setDomainFromCaps("dailyProgress", "dailyProgress", "进度来自本地记录");
+      setDomainFromCaps("reviewWords", "reviewList", "复习队列为本地 SRS 生成");
       sync.setDomain("learnedWords", { status: "local", note: "本地完整记录" });
       sync.setDomain("studyHistory", { status: "local", note: "本地完整记录" });
 
-      // 4. 操作队列回写
-      await this.processQueue(overall === "offline", logged);
-
-      // 5. 完成标记（仅真正完成一次官方同步时才记录时间）
-      if (overall === "ok") {
-        sync.setLastSyncAt(Date.now());
-        await useSettings.getState().set("sync.lastSyncAt", String(Math.floor(Date.now() / 1000)));
+      // 4) 操作队列（按类型分批、独立标记）
+      const didOfficialSync = await this.processQueue(overall === "offline");
+      if (didOfficialSync && overall !== "offline") {
+        overall = "synced";
       }
+
+      // 5) 结束状态
       sync.setOverall(overall);
       if (trigger === "manual") {
-        if (overall === "ok") toast.success("同步完成");
-        else if (overall === "offline") toast.warn("当前离线，显示本地缓存内容");
-        else toast.warn("同步未全部完成，可稍后重试");
+        if (overall === "local") toast.info("当前为本地模式：本地数据已保存，官方同步暂不可用");
+        else if (overall === "offline") toast.warn("当前离线：本地数据正常，显示本地内容");
+        else if (overall === "error") toast.warn("账号状态异常，请到「设置 → 同步」查看详情");
+        else if (overall === "synced") toast.success("官方数据已同步");
+        else toast.info("账号状态已更新：详见「设置 → 同步」");
       }
     } finally {
       useSync.getState().setRunning(false);
@@ -181,88 +180,116 @@ class SyncManager {
     }
   }
 
-  /** 队列处理：登录且官方支持回写时推送；不支持时诚实标记 unsupported；离线/未登录保留 pending */
-  private async processQueue(offline: boolean, logged: boolean): Promise<void> {
+  /** 队列分批处理：study_record 与 favorite 各自独立标记，避免互相污染。
+   *  返回值：是否发生了真正成功的官方同步。 */
+  private async processQueue(offline: boolean): Promise<boolean> {
     const sync = useSync.getState();
     const pending = await api.queueList("pending");
     if (pending.length === 0) {
-      sync.setDomain("writeback", { status: "synced", note: "没有待同步的操作" });
-      return;
+      sync.setDomain("writeback", { status: "local", note: "没有待同步操作（本地数据已保存）" });
+      return false;
     }
     if (offline) {
       sync.setDomain("writeback", {
         status: "pending",
-        note: `${pending.length} 条操作待同步（离线，恢复网络后自动重试）`,
+        note: `${pending.length} 条操作保存在本地（离线，联网后自动重试）`,
       });
-      return;
-    }
-    if (!logged) {
-      sync.setDomain("writeback", {
-        status: "pending",
-        note: `${pending.length} 条操作保存在本地队列（登录官方账号后再尝试同步）`,
-      });
-      return;
+      return false;
     }
 
-    const records: StudyRecord[] = [];
-    const favItems: { wordId: string; favorite: boolean }[] = [];
+    const studyOps: { op: Operation; rec: StudyRecord }[] = [];
+    const favOps: { op: Operation; payload: { wordId: string; favorite: boolean } }[] = [];
     for (const op of pending) {
       try {
         const payload = JSON.parse(op.payload);
-        if (op.opType === "study_record") records.push(payload as StudyRecord);
-        else if (op.opType === "favorite") favItems.push(payload);
+        if (op.opType === "study_record") studyOps.push({ op, rec: payload as StudyRecord });
+        else if (op.opType === "favorite") favOps.push({ op, payload });
       } catch {
         await api.queueMark([op.id], "failed", "队列数据损坏");
       }
     }
 
-    const handled: string[] = [];
-    let note = "";
-    let status: Operation["status"] = "synced";
+    const notes: string[] = [];
 
-    if (records.length > 0) {
-      const r = await this.official.pushStudyRecords(records);
+    // --- study_record 批次 ---
+    if (studyOps.length > 0) {
+      const r = await this.official.pushStudyRecords(studyOps.map((x) => x.rec));
+      const ids = studyOps.map((x) => x.op.id);
       if (r.status === "unsupported" || r.status === "local") {
-        status = "unsupported";
-        note = r.note ?? "官方渠道暂不支持回写";
+        await api.queueMark(ids, "unsupported", r.note ?? "官方渠道暂不支持回写");
+        notes.push(`学习记录 ${ids.length} 条：本地记录，暂未同步至百词斩`);
       } else if (r.status === "failed") {
-        status = "failed";
-        note = r.note ?? "回写失败";
+        await api.queueMark(ids, "failed", r.note ?? "回写失败");
+        notes.push(`学习记录 ${ids.length} 条回写失败（可重试）`);
+      } else if (r.status === "synced") {
+        // 只有官方确认成功后才同时更新队列与学习记录
+        await api.queueMark(ids, "synced", null);
+        try {
+          await api.markStudyRecordsSynced(studyOps.map((x) => x.rec.id));
+        } catch {
+          /* 记录标记失败下次同步纠正 */
+        }
+        notes.push(`学习记录 ${ids.length} 条已同步至百词斩`);
+        await this.markOfficialSync();
       } else {
-        handled.push(...records.map((x) => x.id));
-      }
-    }
-    if (favItems.length > 0) {
-      const r = await this.official.pushFavorites(favItems);
-      if (r.status === "unsupported" || r.status === "local") {
-        status = status === "synced" ? "unsupported" : status;
-        note = note || r.note || "官方渠道暂不支持收藏回写";
-      } else if (r.status === "failed") {
-        status = "failed";
-        note = r.note ?? "回写失败";
+        // pending 等其他状态：保持不动，等待下次
+        notes.push(`学习记录 ${ids.length} 条待同步`);
       }
     }
 
-    // 官方渠道不支持回写时，把所有 pending 标为 unsupported（诚实展示，不再反复尝试）
-    if (status !== "synced") {
-      await api.queueMark(
-        pending.filter((op) => op.status === "pending").map((op) => op.id),
-        status,
-        note,
-      );
-      sync.setDomain("writeback", { status, note: `${pending.length} 条：${note}` });
-    } else if (handled.length > 0) {
-      await api.queueMark(handled, "synced", null);
-      sync.setDomain("writeback", { status: "synced", note: `已同步 ${handled.length} 条` });
+    // --- favorite 批次（独立处理，失败不影响上面结果） ---
+    if (favOps.length > 0) {
+      const r = await this.official.pushFavorites(favOps.map((x) => x.payload));
+      const ids = favOps.map((x) => x.op.id);
+      if (r.status === "unsupported" || r.status === "local") {
+        await api.queueMark(ids, "unsupported", r.note ?? "官方渠道暂不支持收藏回写");
+        notes.push(`收藏变更 ${ids.length} 条：本地已保存，暂未同步`);
+      } else if (r.status === "failed") {
+        await api.queueMark(ids, "failed", r.note ?? "收藏回写失败");
+        notes.push(`收藏变更 ${ids.length} 条回写失败（可重试）`);
+      } else if (r.status === "synced") {
+        await api.queueMark(ids, "synced", null);
+        notes.push(`收藏变更 ${ids.length} 条已同步`);
+        await this.markOfficialSync();
+      } else {
+        notes.push(`收藏变更 ${ids.length} 条待同步`);
+      }
     }
+
+    const anySynced = notes.some((n) => n.includes("已同步至百词斩") || n.includes("条已同步"));
+    sync.setDomain("writeback", {
+      status: anySynced ? "synced" : notes.some((n) => n.includes("失败")) ? "failed" : "unsupported",
+      note: notes.join("；") || "没有待同步操作",
+    });
+    return anySynced;
   }
 
-  /** 重试失败/不支持的操作（用户手动触发，如官方渠道恢复后） */
+  /** 仅在官方数据真正同步成功时调用 */
+  private async markOfficialSync(): Promise<void> {
+    const ts = Date.now();
+    useSync.getState().setOfficialSyncAt(ts);
+    await useSettings.getState().set("official.syncAt", String(Math.floor(ts / 1000)));
+  }
+
+  /** 重试失败/不支持的操作（用户手动触发） */
   async retryQueue(): Promise<void> {
     const all = await api.queueList(null);
-    const retryIds = all.filter((op) => op.status === "failed" || op.status === "unsupported").map((op) => op.id);
+    const retryIds = all
+      .filter((op) => op.status === "failed" || op.status === "unsupported")
+      .map((op) => op.id);
     if (retryIds.length > 0) await api.queueMark(retryIds, "pending", null);
     await this.syncAll("manual");
+  }
+
+  /** 供 UI 手动触发会话验证 */
+  async reverifySession(): Promise<void> {
+    await useAuth.getState().verifySession();
+    await this.syncAll("manual");
+  }
+
+  /** 本地适配器透出（保持接口完整性） */
+  get local() {
+    return localAdapter;
   }
 }
 

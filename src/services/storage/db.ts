@@ -1,11 +1,12 @@
 import { cmd } from "../../utils/invoke";
 import type {
   Book,
-  CapabilityReport,
   CookieData,
   DailyStat,
   HttpResult,
+  LocalDataSummary,
   Operation,
+  SessionProbeResult,
   StudyRecord,
   Word,
   WordWithProgress,
@@ -44,14 +45,21 @@ export const api = {
   queueList: (status?: string | null) => cmd<Operation[]>("queue_list", { status: status ?? null }),
   queueMark: (ids: string[], status: Operation["status"], note?: string | null) =>
     cmd<void>("queue_mark", { ids, status, note: note ?? null }),
+  markStudyRecordsSynced: (ids: string[]) => cmd<number>("mark_study_records_synced", { ids }),
+  localDataSummary: () => cmd<LocalDataSummary>("local_data_summary"),
+
+  // 官方数据缓存（仅官方 READ 真正成功时写入）
+  officialCachePut: (key: string, payload: string) => cmd<void>("official_cache_put", { key, payload }),
+  officialCacheGet: (key: string) => cmd<[string, number] | null>("official_cache_get", { key }),
 
   // 发音
   speak: (text: string) => cmd<void>("speak", { text }),
 
   // 会话与登录
-  sessionSave: (cookies: CookieData[]) => cmd<void>("session_save", { cookies }),
+  sessionSave: (cookies: CookieData[]) => cmd<number>("session_save", { cookies }),
   sessionClear: () => cmd<void>("session_clear"),
   sessionExists: () => cmd<boolean>("session_exists"),
+  verifySession: () => cmd<SessionProbeResult>("verify_session"),
   openLoginWindow: () => cmd<void>("open_login_window"),
   closeLoginWindow: () => cmd<void>("close_login_window"),
   captureLoginCookies: () => cmd<number>("capture_login_cookies"),

@@ -11,8 +11,10 @@ export const AuthService = {
   async confirmLogin(): Promise<boolean> {
     const r = await useAuth.getState().confirmLogin();
     if (r.ok) {
-      toast.success(r.message);
-      // 登录成功后立即进行能力检测与首次同步
+      // 只有通过 SessionProbe 验证才用 success；其余情况用 info（诚实提示中间状态）
+      if (r.message.includes("登录成功")) toast.success(r.message);
+      else toast.info(r.message);
+      // 会话状态变化后立即重新检查（验证 + 能力检测 + 队列）
       await syncManager.syncAll("manual");
     } else {
       toast.error(r.message);

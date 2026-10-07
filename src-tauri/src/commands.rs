@@ -276,6 +276,76 @@ pub fn queue_mark(db: State<Db>, ids: Vec<String>, status: String, note: Option<
     }
 }
 
+/// 官方回写真正成功后才调用：把学习记录标记 synced，保证队列与记录状态一致。
+#[tauri::command]
+pub fn mark_study_records_synced(db: State<Db>, ids: Vec<String>) -> Result<usize, String> {
+    let conn = db.0.lock().unwrap();
+    let mut updated = 0usize;
+    for id in ids {
+        updated += conn
+            .execute(
+                "UPDATE study_records SET synced = 1 WHERE id = ?1",
+                params![id],
+            )
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(updated)
+}
+
+// ---------- 本地数据摘要（设置 → 同步页展示用；与官方状态严格分开） ----------
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalDataSummary {
+    pub records: i64,
+    pub pending_ops: i64,
+    pub unsupported_ops: i64,
+    pub failed_ops: i64,
+    pub words: i64,
+    pub favorites: i64,
+}
+
+#[tauri::command]
+pub fn local_data_summary(db: State<Db>) -> LocalDataSummary {
+    let conn = db.0.lock().unwrap();
+    let count = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap_or(0) };
+    LocalDataSummary {
+        records: count("SELECT COUNT(*) FROM study_records"),
+        pending_ops: count("SELECT COUNT(*) FROM op_queue WHERE status = 'pending'"),
+        unsupported_ops: count("SELECT COUNT(*) FROM op_queue WHERE status = 'unsupported'"),
+        failed_ops: count("SELECT COUNT(*) FROM op_queue WHERE status = 'failed'"),
+        words: count("SELECT COUNT(*) FROM words"),
+        favorites: count("SELECT COUNT(*) FROM word_progress WHERE favorite = 1"),
+    }
+}
+
+// ---------- 官方数据缓存（仅当官方 READ 真正成功时写入） ----------
+
+#[tauri::command]
+pub fn official_cache_put(db: State<Db>, key: String, payload: String) -> Result<(), String> {
+    let conn = db.0.lock().unwrap();
+    conn.execute(
+        "INSERT INTO official_cache(key, payload, synced_at) VALUES(?1, ?2, ?3)
+         ON CONFLICT(key) DO UPDATE SET payload = excluded.payload, synced_at = excluded.synced_at",
+        params![key, payload, chrono::Utc::now().timestamp()],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn official_cache_get(db: State<Db>, key: String) -> Option<(String, i64)> {
+    let conn = db.0.lock().unwrap();
+    conn.query_row(
+        "SELECT payload, synced_at FROM official_cache WHERE key = ?1",
+        params![key],
+        |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
+    )
+    .optional()
+    .ok()
+    .flatten()
+}
+
 // ---------- 发音（本地 TTS） ----------
 
 #[tauri::command]
@@ -299,10 +369,7 @@ pub fn speak(state: State<TtsState>, text: String) -> Result<(), String> {
 // ---------- 会话 ----------
 
 #[tauri::command]
-pub fn session_save(cookies: Vec<CookieData>) -> Result<(), String> {
-    if cookies.is_empty() {
-        return Err("未检测到任何会话信息".into());
-    }
+pub fn session_save(cookies: Vec<CookieData>) -> Result<usize, String> {
     http_client::replace_cookies(cookies)
 }
 
@@ -315,6 +382,20 @@ pub fn session_clear(http: State<HttpState>) {
 #[tauri::command]
 pub fn session_exists() -> bool {
     http_client::has_cookies()
+}
+
+/// 登录真实性验证：携带会话访问官方页面并分析登录特征。
+/// 找不到可靠证据即返回 unverified（“会话已捕获，身份未验证”），绝不把 200 当作已登录。
+#[tauri::command]
+pub async fn verify_session(http: State<'_, HttpState>) -> Result<http_client::SessionProbeResult, String> {
+    let result = http_client::probe_session(&http).await;
+    // 只记录 verdict 与状态码，绝不记录会话内容
+    log::info!(
+        "session probe: verdict={} status={:?}",
+        result.verdict,
+        result.http_status
+    );
+    Ok(result)
 }
 
 // ---------- 官方登录窗口 ----------
@@ -363,15 +444,19 @@ pub async fn capture_login_cookies(app: AppHandle, http: State<'_, HttpState>) -
             value: c.value().to_string(),
             domain: c.domain().map(|s| s.to_string()),
             path: c.path().map(|s| s.to_string()),
+            secure: None,
+            expires: None,
+            http_only: None,
         })
         .collect();
     if let Some(w) = app.get_webview_window("login") {
         let _ = w.close();
     }
-    let n = list.len();
-    http_client::replace_cookies(list)?;
-    let _ = http; // 触发重新加载在下次请求时自动发生（cookies 统一存取）
-    Ok(n)
+    // replace_cookies 内部会过滤：非百词斩官方域名的 Cookie 一律丢弃；
+    // 若过滤后为空则返回错误（未登录或仅匿名 Cookie），前端不会显示“登录成功”。
+    let accepted = http_client::replace_cookies(list)?;
+    let _ = http; // 会话统一存放于 HttpState（下次请求自动生效）
+    Ok(accepted)
 }
 
 // ---------- HTTP（供适配器使用，内置 SSRF 防护） ----------

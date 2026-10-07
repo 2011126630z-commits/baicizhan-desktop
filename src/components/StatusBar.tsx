@@ -32,7 +32,7 @@ export function StatusBar() {
         连续 <b>{streak}</b> 天
       </span>
       <span style={{ flex: 1 }} />
-      <SyncBadge />
+      <SyncBadge compact />
     </footer>
   );
 }

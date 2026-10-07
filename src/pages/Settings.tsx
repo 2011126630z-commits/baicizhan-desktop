@@ -3,13 +3,14 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { api } from "../services/storage/db";
-import { useAuth } from "../stores/auth";
+import { useAuth, sessionLabel } from "../stores/auth";
 import { useSettings } from "../stores/settings";
 import { useSync } from "../stores/sync";
 import { syncManager } from "../services/sync/SyncManager";
 import { AuthService } from "../services/auth/AuthService";
 import { findConflicts, HOTKEY_LABELS, hkLabel, type HotkeyMap, DEFAULT_HOTKEYS, eventHotkey } from "../utils/hotkeys";
 import { Modal, Spinner, Toggle } from "../components/ui";
+import { LoginModal } from "../components/LoginModal";
 import { SyncBadge } from "../components/SyncBadge";
 import { toast } from "../stores/toast";
 import { fmtDateTime } from "../utils/time";
@@ -100,8 +101,7 @@ function AccountSection() {
   const [loginModal, setLoginModal] = useState(false);
   const [confirming, setConfirming] = useState(false);
 
-  const stateLabel =
-    sessionState === "logged_in" ? "已登录（官方会话有效）" : sessionState === "expired" ? "登录状态已失效，请重新登录" : sessionState === "checking" ? "检查中…" : "未登录";
+  const stateLabel = sessionLabel(sessionState);
 
   return (
     <>
@@ -166,45 +166,12 @@ function AccountSection() {
         </div>
       </SectionCard>
 
-      <Modal open={loginModal} title="官方登录流程" onClose={() => setLoginModal(false)} width={480}>
-        <ol style={{ fontSize: 13.5, color: "var(--text-2)", paddingLeft: 20, lineHeight: 2 }}>
-          <li>已为你打开百词斩官方网页登录窗口</li>
-          <li>请在官方页面中完成登录（账号密码 / 扫码 / 短信，均由官方处理）</li>
-          <li>登录成功后，回到这里点击「我已完成登录」</li>
-        </ol>
-        <p style={{ fontSize: 12, color: "var(--text-3)", margin: "10px 0 16px" }}>
-          桌面版不读取、不记录、不上传你的密码；只保存登录后的会话（Windows 凭据管理器加密存储）。
-        </p>
-        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-          <button
-            className="btn"
-            onClick={async () => {
-              setLoginModal(false);
-              await AuthService.cancelLogin();
-            }}
-          >
-            取消
-          </button>
-          <button
-            className="btn btn-primary"
-            disabled={confirming}
-            onClick={async () => {
-              setConfirming(true);
-              const ok = await AuthService.confirmLogin();
-              setConfirming(false);
-              if (ok) setLoginModal(false);
-            }}
-          >
-            {confirming ? <Spinner /> : null}
-            我已完成登录
-          </button>
-        </div>
-      </Modal>
+      <LoginModal open={loginModal} onClose={() => setLoginModal(false)} />
     </>
   );
 }
 
-/* ---------- 同步 ---------- */
+/* ---------- 同步（0.2.0 三块式：账号连接 / 本地数据 / 官方能力） ---------- */
 
 function SyncSection() {
   const sync = useSync();
@@ -212,6 +179,11 @@ function SyncSection() {
   const autoSync = settingsMap["sync.auto"] !== "false";
   const interval = settingsMap["sync.intervalMin"] || "30";
   const caps = sync.capabilities;
+  const session = useAuth((s) => s.sessionState);
+  const sessionNote = useAuth((s) => s.sessionNote);
+  const lastProbe = useAuth((s) => s.lastProbe);
+  const summary = sync.localSummary;
+  const [loginModal, setLoginModal] = useState(false);
 
   const capBadge = (status?: string) => {
     const map: Record<string, { cls: string; text: string }> = {
@@ -224,50 +196,124 @@ function SyncSection() {
     return <span className={`tag ${m.cls}`}>{m.text}</span>;
   };
 
+  const sessionTag = (() => {
+    switch (session) {
+      case "logged_in":
+        return <span className="tag tag-green">已验证登录</span>;
+      case "captured":
+        return <span className="tag tag-blue">会话待验证</span>;
+      case "verifying":
+        return <span className="tag tag-blue">验证中…</span>;
+      case "expired":
+        return <span className="tag tag-red">会话已过期</span>;
+      case "offline":
+        return <span className="tag tag-orange">离线（未验证）</span>;
+      case "verification_failed":
+        return <span className="tag tag-red">身份未验证</span>;
+      default:
+        return <span className="tag tag-gray">未登录</span>;
+    }
+  })();
+
   return (
     <>
-      <SectionCard title="同步状态">
-        <Row label="最后同步" desc={sync.lastSyncAt ? undefined : "尚未成功同步过"}>
-          {sync.lastSyncAt ? fmtDateTime(sync.lastSyncAt) : "—"}
+      {/* ---------- 一、账号连接 ---------- */}
+      <SectionCard title="① 账号连接">
+        <Row label="百词斩账号状态" desc={sessionNote || undefined}>
+          {sessionTag}
         </Row>
-        <Row label="当前状态">
-          <SyncBadge />
+        <Row label="网络状态">{sync.online ? "在线" : "离线 · 本地数据不受影响"}</Row>
+        <Row
+          label="最近验证"
+          desc={
+            lastProbe
+              ? `结果：${lastProbe.verdict}${lastProbe.finalHost ? " · " + lastProbe.finalHost : ""}`
+              : "尚未执行会话验证"
+          }
+        >
+          {lastProbe ? fmtDateTime(lastProbe.checkedAt) : "—"}
         </Row>
-        <Row label="网络状态">
-          {sync.online ? "在线" : "离线 · 显示上次同步内容"}
+        <div style={{ display: "flex", gap: 10, marginTop: 10, flexWrap: "wrap" }}>
+          {session === "logged_out" || session === "expired" ? (
+            <button
+              className="btn btn-primary"
+              onClick={async () => {
+                setLoginModal(true);
+                await AuthService.openOfficialLoginPage();
+              }}
+            >
+              登录百词斩账号
+            </button>
+          ) : (
+            <button className="btn btn-primary" disabled={sync.running} onClick={() => void syncManager.reverifySession()}>
+              {sync.running ? <Spinner /> : null}
+              重新验证会话
+            </button>
+          )}
+          {(session === "captured" || session === "verification_failed") && (
+            <button
+              className="btn"
+              onClick={async () => {
+                setLoginModal(true);
+                await AuthService.openOfficialLoginPage();
+              }}
+            >
+              重新打开官方登录
+            </button>
+          )}
+          {session !== "logged_out" && (
+            <button className="btn btn-danger" onClick={() => void AuthService.logout()}>
+              退出登录
+            </button>
+          )}
+        </div>
+        <p style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: 10, lineHeight: 1.7 }}>
+          说明：捕获到 Cookie ≠ 已登录。本程序会携带会话访问官方页面进行身份验证；
+          若官方页面未提供可验证身份的标记，将如实显示「会话待验证」，绝不显示为已登录。
+        </p>
+      </SectionCard>
+
+      <LoginModal open={loginModal} onClose={() => setLoginModal(false)} />
+
+      {/* ---------- 二、本地数据 ---------- */}
+      <SectionCard title="② 本地数据">
+        <Row label="SQLite 数据库" desc="本地词书、学习记录、收藏与统计均保存在本机">
+          <span className="tag tag-green">正常</span>
+        </Row>
+        <Row label="学习记录">{summary ? `${summary.records} 条` : "—"}</Row>
+        <Row label="单词 / 收藏">
+          {summary ? `${summary.words} 词 · ${summary.favorites} 条收藏` : "—"}
+        </Row>
+        <Row
+          label="待同步操作"
+          desc={
+            summary
+              ? `待同步 ${summary.pendingOps} · 官方不支持 ${summary.unsupportedOps} · 失败 ${summary.failedOps}`
+              : undefined
+          }
+        >
+          {summary ? `${summary.pendingOps + summary.unsupportedOps + summary.failedOps} 条` : "—"}
         </Row>
         <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
-          <button className="btn btn-primary" disabled={sync.running} onClick={() => void syncManager.syncAll("manual")}>
+          <button className="btn" disabled={sync.running} onClick={() => void syncManager.syncAll("manual")}>
             {sync.running ? <Spinner /> : null}
-            立即同步
+            刷新本地状态
           </button>
           <button className="btn" onClick={() => void syncManager.retryQueue()}>
             重试未同步操作
           </button>
         </div>
-      </SectionCard>
-
-      <SectionCard title="自动同步">
-        <Row label="自动同步" desc="启动时与每隔一段时间后台静默同步">
-          <Toggle
-            on={autoSync}
-            onChange={(v) => void useSettings.getState().set("sync.auto", String(v))}
-          />
-        </Row>
-        <Row label="同步间隔">
-          <select className="input" value={interval} onChange={(e) => void useSettings.getState().set("sync.intervalMin", e.target.value)} style={{ width: 120 }}>
-            <option value="15">15 分钟</option>
-            <option value="30">30 分钟</option>
-            <option value="60">60 分钟</option>
-          </select>
-        </Row>
-      </SectionCard>
-
-      <SectionCard title="数据能力（运行时检测）">
-        <p style={{ fontSize: 12.5, color: "var(--text-3)", marginBottom: 10 }}>
-          以下能力由 CapabilityDetector 通过官方网页正常渠道检测。标记「暂不支持」的功能不会伪装成已同步。
+        <p style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: 10 }}>
+          本地数据实时保存于本机，与官方是否可用无关；点击「刷新本地状态」只会更新统计，不会伪造官方同步。
         </p>
-        {CAP_LABELS && Object.entries(CAP_LABELS).map(([k, label]) => {
+      </SectionCard>
+
+      {/* ---------- 三、百词斩官方能力 ---------- */}
+      <SectionCard title="③ 百词斩官方能力（运行时检测）">
+        <Row label="官方学习同步" desc={officialTextOf(sync.officialSyncAt)}>
+          {sync.officialSyncAt ? <span className="tag tag-green">已同步</span> : <span className="tag tag-gray">暂不可用</span>}
+        </Row>
+        {Object.entries(CAP_LABELS).map(([k, label]) => {
           const item = caps?.items[k as CapabilityKey];
           return (
             <Row key={k} label={label} desc={item?.note ?? "尚未检测"}>
@@ -281,11 +327,22 @@ function SyncSection() {
             onClick={async () => {
               try {
                 const { toMarkdown } = await import("../services/sync/CapabilityDetector");
-                if (!caps) {
-                  toast.warn("还没有能力报告，请先登录并同步一次");
-                  return;
-                }
-                const paths = await api.exportCapabilitiesReport(toMarkdown(caps));
+                const paths = await api.exportCapabilitiesReport(
+                  toMarkdown(
+                    caps ?? {
+                      checkedAt: Math.floor(Date.now() / 1000),
+                      loginChannel: "available",
+                      items: Object.fromEntries(
+                        Object.keys(CAP_LABELS).map((k) => [
+                          k,
+                          { status: "unavailable" as const, note: "尚未检测" },
+                        ]),
+                      ) as never,
+                    },
+                    session,
+                    sessionNote,
+                  ),
+                );
                 toast.success(`已导出：${paths.join(" , ")}`);
               } catch (e) {
                 toast.error(e instanceof Error ? e.message : "导出失败");
@@ -296,8 +353,33 @@ function SyncSection() {
           </button>
         </div>
       </SectionCard>
+
+      {/* ---------- 自动同步设置 ---------- */}
+      <SectionCard title="自动检查">
+        <Row label="自动检查官方状态" desc="启动时与每隔一段时间后台检查（不伪造同步）">
+          <Toggle on={autoSync} onChange={(v) => void useSettings.getState().set("sync.auto", String(v))} />
+        </Row>
+        <Row label="检查间隔">
+          <select
+            className="input"
+            value={interval}
+            onChange={(e) => void useSettings.getState().set("sync.intervalMin", e.target.value)}
+            style={{ width: 120 }}
+          >
+            <option value="15">15 分钟</option>
+            <option value="30">30 分钟</option>
+            <option value="60">60 分钟</option>
+          </select>
+        </Row>
+      </SectionCard>
     </>
   );
+}
+
+function officialTextOf(ts: number | null): string {
+  return ts
+    ? `最近一次官方数据同步：${fmtDateTime(ts)}`
+    : "官方渠道当前未提供可安全使用的学习数据读写；本地功能不受影响";
 }
 
 /* ---------- 学习 ---------- */
