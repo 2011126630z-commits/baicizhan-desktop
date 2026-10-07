@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../services/storage/db";
+import { useSync } from "../stores/sync";
 import { BarChart, LineChart } from "../components/charts";
 import { EmptyState } from "../components/ui";
 import { fmtMinutes } from "../utils/time";
@@ -18,14 +19,16 @@ export function StatisticsPage() {
   const [range, setRange] = useState<Range>("7d");
   const [stats, setStats] = useState<DailyStat[]>([]);
   const [streak, setStreak] = useState(0);
+  const bootstrapped = useSync((s) => s.bootstrapped);
 
   useEffect(() => {
+    if (!bootstrapped) return;
     void (async () => {
       const days = RANGES.find((r) => r.key === range)?.days ?? 7;
       setStats(await api.statsDaily(days));
       setStreak(await api.streak());
     })();
-  }, [range]);
+  }, [range, bootstrapped]);
 
   const totals = useMemo(() => {
     const learned = stats.reduce((a, b) => a + b.learned, 0);

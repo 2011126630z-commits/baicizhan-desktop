@@ -19,12 +19,23 @@ export function MiniPage() {
   useEffect(() => {
     void (async () => {
       setPinned(await win.isAlwaysOnTop());
-      const due = await api.reviewDue(50);
-      setQueue(due);
-      if (due[0]) void playWordAudio(due[0]);
+      const q = await loadQueue();
+      setQueue(q);
+      if (q[0]) void playWordAudio(q[0]);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /** 优先复习队列；没有待复习时回退到新词，保证小窗随时可用 */
+  const loadQueue = async (): Promise<WordWithProgress[]> => {
+    const due = await api.reviewDue(50);
+    if (due.length > 0) return due;
+    const books = await api.bookList();
+    const active = books.find((b) => b.active === 1);
+    if (!active) return [];
+    const all = await api.wordList(active.id);
+    return all.filter((w) => w.status === "new").slice(0, 20);
+  };
 
   const submit = useCallback(
     async (result: "known" | "unknown") => {
@@ -38,7 +49,7 @@ export function MiniPage() {
             bookId: word.bookId,
             ts: Math.floor(Date.now() / 1000),
             result,
-            mode: "review",
+            mode: word.status === "new" ? "learn" : "review",
             synced: false,
           });
         } catch {
@@ -49,16 +60,15 @@ export function MiniPage() {
       } else {
         const nextIdx = idx + 1;
         if (nextIdx >= queue.length) {
-          // 循环刷新队列
-          const due = await api.reviewDue(50);
-          setQueue(due);
+          const q = await loadQueue();
+          setQueue(q);
           setIdx(0);
+          if (q[0]) void playWordAudio(q[0]);
         } else {
           setIdx(nextIdx);
+          void playWordAudio(queue[nextIdx]);
         }
         setRevealed(false);
-        const w = queue[nextIdx] ?? (await api.reviewDue(1))[0];
-        if (w) void playWordAudio(w);
       }
     },
     [word, revealed, idx, queue],
@@ -71,11 +81,13 @@ export function MiniPage() {
       if (e.key === " ") {
         e.preventDefault();
         if (word) void playWordAudio(word);
-      } else if (e.key === "1" && !revealed) void submit("known");
-      else if (e.key === "3") {
-        if (revealed) void submit("unknown");
-        else void submit("unknown");
-      } else if (e.key === "Enter" && revealed) void submit("known");
+      } else if (e.key === "1") {
+        if (!revealed) void submit("known");
+      } else if (e.key === "3") {
+        if (!revealed) void submit("unknown");
+      } else if (e.key === "Enter" && revealed) {
+        void submit("known");
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

@@ -5,6 +5,7 @@ import { api } from "../services/storage/db";
 import { useAuth } from "../stores/auth";
 import { useSettings } from "../stores/settings";
 import { useStudy } from "../stores/study";
+import { useSync } from "../stores/sync";
 import { AuthService } from "../services/auth/AuthService";
 import { toast } from "../stores/toast";
 import { EmptyState, ProgressRing } from "../components/ui";
@@ -15,6 +16,7 @@ import { UNSUPPORTED_WRITE_NOTE } from "../adapters/types";
 export function HomePage() {
   const navigate = useNavigate();
   const sessionState = useAuth((s) => s.sessionState);
+  const bootstrapped = useSync((s) => s.bootstrapped);
   const nickname = useSettings((s) => s.map["account.nickname"] ?? "");
   const [today, setToday] = useState({ learned: 0, reviewed: 0, minutes: 0 });
   const [target, setTarget] = useState(20);
@@ -24,6 +26,7 @@ export function HomePage() {
   const [recent, setRecent] = useState<DailyStat[]>([]);
 
   useEffect(() => {
+    if (!bootstrapped) return;
     void (async () => {
       try {
         const s = await api.statsToday();
@@ -43,7 +46,7 @@ export function HomePage() {
         /* 首页数据加载失败不阻塞 */
       }
     })();
-  }, []);
+  }, [bootstrapped]);
 
   const percent = target > 0 ? Math.min(1, today.learned / target) : 0;
   const remaining = Math.max(0, target - today.learned);

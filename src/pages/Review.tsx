@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Play } from "lucide-react";
 import { api } from "../services/storage/db";
 import { useStudy } from "../stores/study";
+import { useSync } from "../stores/sync";
 import { EmptyState } from "../components/ui";
 import { fmtDateCN } from "../utils/time";
 import type { WordWithProgress } from "../types/models";
@@ -24,8 +25,10 @@ export function ReviewPage() {
   const [reviewedToday, setReviewedToday] = useState(0);
   const [loading, setLoading] = useState(true);
   const startReview = useStudy((s) => s.loadReview);
+  const bootstrapped = useSync((s) => s.bootstrapped);
 
   useEffect(() => {
+    if (!bootstrapped) return;
     void (async () => {
       try {
         const due = await api.reviewDue(999);
@@ -51,7 +54,7 @@ export function ReviewPage() {
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filter]);
+  }, [filter, bootstrapped]);
 
   const summary = useMemo(() => {
     const total = words.length;

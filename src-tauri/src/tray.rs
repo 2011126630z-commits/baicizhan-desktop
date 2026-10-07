@@ -32,7 +32,14 @@ pub fn create_tray(app: &AppHandle) -> tauri::Result<()> {
                 }
             }
             "mini" => {
-                let _ = crate::commands::show_mini_window(app.clone(), app.state::<crate::db::Db>());
+                // 托盘回调在主线程运行：必须异步派发窗口创建，否则会死锁
+                let app2 = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let db = app2.state::<crate::db::Db>();
+                    if let Err(e) = crate::commands::show_mini_window(app2.clone(), db).await {
+                        log::warn!("打开小窗失败: {e}");
+                    }
+                });
             }
             "quit" => app.exit(0),
             _ => {}

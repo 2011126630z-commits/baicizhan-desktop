@@ -321,6 +321,7 @@ pub fn study_submit(conn: &mut Connection, rec: &StudyRecord) -> Result<(bool, i
         }
 
         // 更新进度（SRS 简化：known +1，fuzzy 不变，unknown -2 且错误数 +1）
+        // 只要答过题就标记为 learning（答错的词必须进入复习队列）
         let stage_delta: i64 = match rec.result.as_str() {
             "known" => 1,
             "unknown" => -2,
@@ -329,14 +330,12 @@ pub fn study_submit(conn: &mut Connection, rec: &StudyRecord) -> Result<(bool, i
         tx.execute(
             "INSERT INTO word_progress(word_id, book_id, stage, wrong_count, last_seen, status)
              VALUES(?1, ?2, MAX(0, ?3), CASE WHEN ?4 = 'unknown' THEN 1 ELSE 0 END, ?5,
-                    CASE WHEN MAX(0, ?3) >= 4 THEN 'mastered' WHEN MAX(0, ?3) > 0 THEN 'learning' ELSE 'new' END)
+                    CASE WHEN MAX(0, ?3) >= 4 THEN 'mastered' ELSE 'learning' END)
              ON CONFLICT(word_id) DO UPDATE SET
                stage = MAX(0, word_progress.stage + ?3),
                wrong_count = wrong_count + CASE WHEN ?4 = 'unknown' THEN 1 ELSE 0 END,
                last_seen = ?5,
-               status = CASE WHEN MAX(0, word_progress.stage + ?3) >= 4 THEN 'mastered'
-                             WHEN MAX(0, word_progress.stage + ?3) > 0 THEN 'learning'
-                             ELSE word_progress.status END",
+               status = CASE WHEN MAX(0, word_progress.stage + ?3) >= 4 THEN 'mastered' ELSE 'learning' END",
             params![rec.word_id, rec.book_id, stage_delta, rec.result, rec.ts],
         )
         .map_err(|e| e.to_string())?;

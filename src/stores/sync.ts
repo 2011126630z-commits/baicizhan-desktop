@@ -11,6 +11,9 @@ interface SyncState {
   lastAttemptAt: number | null;
   domains: Record<DomainKey, DomainState>;
   capabilities: CapabilityReport | null;
+  /** 启动初始化（设置/种子数据/会话）是否完成——页面据此决定何时从本地库读数据 */
+  bootstrapped: boolean;
+  setBootstrapped: (v: boolean) => void;
   setRunning: (v: boolean) => void;
   setOnline: (v: boolean) => void;
   setOverall: (v: OverallSyncState) => void;
@@ -48,6 +51,8 @@ export const useSync = create<SyncState>((set) => ({
   lastAttemptAt: null,
   domains: emptyDomains(),
   capabilities: null,
+  bootstrapped: false,
+  setBootstrapped: (v) => set({ bootstrapped: v }),
   setRunning: (v) => set({ running: v }),
   setOnline: (v) => set({ online: v }),
   setOverall: (v) => set({ overall: v }),

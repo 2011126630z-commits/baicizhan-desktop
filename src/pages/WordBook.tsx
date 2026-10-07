@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { LayoutGrid, Rows3, Star, Upload } from "lucide-react";
 import { api } from "../services/storage/db";
+import { useSync } from "../stores/sync";
 import { StudyService } from "../services/study/StudyService";
 import { EmptyState } from "../components/ui";
 import { fmtDateCN, relativeTime } from "../utils/time";
@@ -31,6 +32,7 @@ export function WordBookPage() {
   const [view, setView] = useState<"table" | "card">("table");
   const [loading, setLoading] = useState(true);
   const fileRef = useRef<HTMLInputElement>(null);
+  const bootstrapped = useSync((s) => s.bootstrapped);
 
   const load = async (bid?: string) => {
     setLoading(true);
@@ -49,8 +51,10 @@ export function WordBookPage() {
   };
 
   useEffect(() => {
+    if (!bootstrapped) return;
     void load();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bootstrapped]);
 
   const shown = useMemo(() => {
     let list = words;

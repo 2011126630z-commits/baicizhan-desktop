@@ -318,9 +318,11 @@ pub fn session_exists() -> bool {
 }
 
 // ---------- 官方登录窗口 ----------
+// 注意：凡是在命令里创建/操作 WebviewWindow 的都必须用 async 命令，
+// 因为同步命令运行在主线程，builder.build() 会在主线程等待自身从而死锁。
 
 #[tauri::command]
-pub fn open_login_window(app: AppHandle) -> Result<(), String> {
+pub async fn open_login_window(app: AppHandle) -> Result<(), String> {
     if let Some(w) = app.get_webview_window("login") {
         let _ = w.show();
         let _ = w.set_focus();
@@ -346,7 +348,7 @@ pub fn close_login_window(app: AppHandle) {
 
 /// 用户在官方页面完成登录后点击确认：从官方域读取会话 Cookie（只取会话，不碰密码）
 #[tauri::command]
-pub fn capture_login_cookies(app: AppHandle, http: State<HttpState>) -> Result<usize, String> {
+pub async fn capture_login_cookies(app: AppHandle, http: State<'_, HttpState>) -> Result<usize, String> {
     let window = app
         .get_webview_window("login")
         .ok_or("登录窗口已关闭，请重新打开")?;
@@ -407,7 +409,7 @@ pub fn app_exit(app: AppHandle) {
 }
 
 #[tauri::command]
-pub fn show_mini_window(app: AppHandle, db: State<Db>) -> Result<(), String> {
+pub async fn show_mini_window(app: AppHandle, db: State<'_, Db>) -> Result<(), String> {
     if let Some(w) = app.get_webview_window("mini") {
         let _ = w.show();
         let _ = w.set_focus();
@@ -416,7 +418,7 @@ pub fn show_mini_window(app: AppHandle, db: State<Db>) -> Result<(), String> {
     let always_top = db::settings_get(&db.0.lock().unwrap(), "desktop.miniAlwaysTop")
         .map(|v| v == "true")
         .unwrap_or(false);
-    tauri::WebviewWindowBuilder::new(&app, "mini", tauri::WebviewUrl::App("index.html#/mini".into()))
+    let w = tauri::WebviewWindowBuilder::new(&app, "mini", tauri::WebviewUrl::App("index.html#/mini".into()))
         .title("小窗背词")
         .inner_size(400.0, 280.0)
         .resizable(false)
@@ -425,6 +427,8 @@ pub fn show_mini_window(app: AppHandle, db: State<Db>) -> Result<(), String> {
         .center()
         .build()
         .map_err(|e| e.to_string())?;
+    // 确保小窗浮到主窗口之上（用户点「小窗背词」就是希望它立刻可见）
+    let _ = w.set_focus();
     Ok(())
 }
 
@@ -462,11 +466,16 @@ pub fn export_capabilities_report(app: AppHandle, md: String) -> Result<Vec<Stri
     std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
     std::fs::write(&p1, &md).map_err(|e| e.to_string())?;
     written.push(p1.to_string_lossy().to_string());
-    // 开发模式下同时写入项目 docs/，方便入库
+    // 开发模式下同时写入项目 docs/，方便入库（cwd 可能是 src-tauri 或项目根目录）
     if cfg!(debug_assertions) {
         if let Ok(cwd) = std::env::current_dir() {
-            let docs = cwd.join("docs").join("capabilities.md");
-            if std::fs::create_dir_all(docs.parent().unwrap()).is_ok() {
+            let base = if cwd.file_name().map(|n| n == "src-tauri").unwrap_or(false) {
+                cwd.parent().map(|p| p.to_path_buf()).unwrap_or(cwd.clone())
+            } else {
+                cwd.clone()
+            };
+            let docs = base.join("docs").join("capabilities.md");
+            if std::fs::create_dir_all(docs.parent().unwrap_or(&base)).is_ok() {
                 if std::fs::write(&docs, &md).is_ok() {
                     written.push(docs.to_string_lossy().to_string());
                 }

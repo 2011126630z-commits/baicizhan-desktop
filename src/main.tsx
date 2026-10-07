@@ -30,6 +30,9 @@ function Bootstrap() {
         syncManager.start();
       } catch (e) {
         console.error("启动初始化失败", e);
+      } finally {
+        // 告诉页面：本地数据已就绪，可以安全读取（避免首屏读空的竞态）
+        useSync.getState().setBootstrapped(true);
       }
     })();
 

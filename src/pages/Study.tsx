@@ -2,6 +2,7 @@ import { useNavigate } from "react-router-dom";
 import { useCallback, useEffect, useState } from "react";
 import { ArrowLeft, Play, RotateCcw } from "lucide-react";
 import { useStudy } from "../stores/study";
+import { useSync } from "../stores/sync";
 import { hotkeysOf, useSettings } from "../stores/settings";
 import { matchHotkey } from "../utils/hotkeys";
 import { WordCard } from "../components/WordCard";
@@ -37,8 +38,10 @@ export function StudyPage() {
   const autoPlay = settings.map["study.autoPlay"] !== "false";
   const [pressing, setPressing] = useState<string | null>(null);
   const toggleFocus = useUi((s) => s.toggleFocus);
+  const bootstrapped = useSync((s) => s.bootstrapped);
 
   useEffect(() => {
+    if (!bootstrapped) return;
     const isReview = window.location.hash.includes("mode=review");
     void (isReview ? loadReview() : loadLearn());
     beginSession();
@@ -46,7 +49,7 @@ export function StudyPage() {
       void endSession();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [bootstrapped]);
 
   const word = current();
   const done = queue.length > 0 && idx >= queue.length;
