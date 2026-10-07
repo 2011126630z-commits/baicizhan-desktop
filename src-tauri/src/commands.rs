@@ -409,12 +409,25 @@ pub async fn open_login_window(app: AppHandle) -> Result<(), String> {
         let _ = w.set_focus();
         return Ok(());
     }
-    let url: tauri::Url = http_client::official_origin().parse().map_err(|e| format!("{e}"))?;
+    // 直接打开官方登录路由（实测存在且服务端登录逻辑在线；营销首页无该入口链接）
+    let url: tauri::Url = http_client::official_login_url()
+        .parse()
+        .map_err(|e| format!("{e}"))?;
     tauri::WebviewWindowBuilder::new(&app, "login", tauri::WebviewUrl::External(url))
         .title("百词斩 · 官方登录（请在官方页面完成登录）")
-        .inner_size(1020.0, 720.0)
+        .inner_size(1020.0, 780.0)
         .center()
         .resizable(true)
+        // 认证导航白名单：只允许官方域与已知 OAuth 提供方页面；
+        // 与 Cookie 白名单严格独立（第三方域永远拿不到百词斩 Cookie）。
+        .on_navigation(|u| {
+            let host = u.host_str().unwrap_or_default();
+            let ok = http_client::is_allowed_auth_navigation(host);
+            if !ok {
+                log::warn!("login window blocked navigation to non-auth host: {host}");
+            }
+            ok
+        })
         .build()
         .map_err(|e| e.to_string())?;
     Ok(())

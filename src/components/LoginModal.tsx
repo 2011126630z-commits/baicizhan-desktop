@@ -11,10 +11,10 @@ export function LoginModal({ open, onClose }: { open: boolean; onClose: () => vo
   const [confirming, setConfirming] = useState(false);
 
   return (
-    <Modal open={open} title="官方登录流程" onClose={onClose} width={520}>
+    <Modal open={open} title="官方登录流程" onClose={onClose} width={500}>
       <ol style={{ fontSize: 13.5, color: "var(--text-2)", paddingLeft: 20, lineHeight: 2 }}>
-        <li>已为你打开百词斩官方网站（www.baicizhan.com）</li>
-        <li>如果你在官方页面看到登录入口，请在官方页面完成登录（账号密码 / 扫码 / 短信，均由官方处理）</li>
+        <li>已为你打开百词斩官方登录页（www.baicizhan.com/login）</li>
+        <li>请在官方页面中完成登录（邮箱/密码，或第三方登录，均由官方处理）</li>
         <li>登录成功后，回到这里点击「我已完成登录」</li>
       </ol>
       <div
@@ -28,10 +28,9 @@ export function LoginModal({ open, onClose }: { open: boolean; onClose: () => vo
           lineHeight: 1.8,
         }}
       >
-        实测说明（2026-10-07）：百词斩官方网站当前仅提供 App 下载与词书展示，
-        <strong>未提供 PC 网页登录入口</strong>。如果你在官方页面找不到登录按钮，
-        说明官方尚未开放网页端登录 —— 这是官方产品形态限制，与本程序无关，
-        桌面版的本地学习功能不受任何影响。
+        实测（2026-10-08）：官方「微信登录」当前返回 <strong>redirect_uri 参数错误</strong>
+        （标准浏览器访问官方页面同样出现，属官方 OAuth 配置问题）；
+        <strong>建议优先使用「邮箱 + 密码」登录</strong>（服务端实测可用）。
       </div>
       <p style={{ fontSize: 12, color: "var(--text-3)", margin: "0 0 16px", lineHeight: 1.7 }}>
         桌面版不读取、不记录、不上传你的密码；只保存登录后的会话（Windows 凭据管理器加密存储）。

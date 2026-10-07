@@ -6,6 +6,11 @@ use url::Url;
 /// 官方根域：任何携带认证信息的请求只允许发往该域及其子域。
 const OFFICIAL_ROOT: &str = "baicizhan.com";
 const OFFICIAL_ORIGIN: &str = "https://www.baicizhan.com/";
+/// 官方网页登录入口（2026-10-07 实测：页面存在且服务端登录逻辑在线）。
+/// 注意：官网营销首页（/）没有指向该页面的链接，但该路由本身仍然有效。
+const OFFICIAL_LOGIN_URL: &str = "https://www.baicizhan.com/login";
+/// 官方网页版欢迎/体验页（同样保留：有"点此登录"入口）。
+const OFFICIAL_HELLO_URL: &str = "https://www.baicizhan.com/hello";
 const COOKIE_KEY: &str = "session.cookies";
 const MAX_REDIRECTS: usize = 5;
 
@@ -201,6 +206,30 @@ pub fn replace_cookies(cookies: Vec<CookieData>) -> Result<usize, String> {
     }
     save_cookies(&filtered)?;
     Ok(filtered.len())
+}
+
+/// 认证导航白名单（AUTH_NAVIGATION_ALLOWLIST）：
+/// 决定登录窗口允许导航到哪些认证域。与 Cookie 白名单严格分开：
+/// - 本函数只控制"登录窗口能不能打开该页面"；
+/// - 百词斩 Cookie 的发送永远只走 is_allowed_official_host（第三方 OAuth 域 NEVER 收到百词斩 Cookie）。
+pub fn is_allowed_auth_navigation(host: &str) -> bool {
+    let h = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    if h.is_empty() {
+        return false;
+    }
+    if is_allowed_official_host(&h) {
+        return true;
+    }
+    const THIRD_PARTY: &[&str] = &[
+        "weixin.qq.com", // 微信 OAuth（open.weixin.qq.com / login.weixin.qq.com）
+        "weibo.com",     // 微博 OAuth
+        "sina.com.cn",   // 微博登录（login.sina.com.cn）
+        "renren.com",    // 人人 OAuth
+        "qq.com",        // 微信流程辅助域
+    ];
+    THIRD_PARTY
+        .iter()
+        .any(|root| h == *root || h.ends_with(&format!(".{root}")))
 }
 
 /// SSRF / 越权防护：所有出站请求必须指向 https 的官方域名（含子域）。
@@ -411,6 +440,14 @@ fn classify_reqwest_err(e: &reqwest::Error) -> String {
 
 pub fn official_origin() -> &'static str {
     OFFICIAL_ORIGIN
+}
+
+pub fn official_login_url() -> &'static str {
+    OFFICIAL_LOGIN_URL
+}
+
+pub fn official_hello_url() -> &'static str {
+    OFFICIAL_HELLO_URL
 }
 
 // ---------------------------------------------------------------------------
@@ -626,6 +663,22 @@ mod tests {
             ..c.clone()
         };
         assert!(!cookie_matches(&no_domain, "www.baicizhan.com", "/"));
+    }
+
+    #[test]
+    fn auth_navigation_allowlist() {
+        // 官方域与第三方 OAuth 域允许导航
+        assert!(is_allowed_auth_navigation("www.baicizhan.com"));
+        assert!(is_allowed_auth_navigation("passport.baicizhan.com"));
+        assert!(is_allowed_auth_navigation("open.weixin.qq.com"));
+        assert!(is_allowed_auth_navigation("login.sina.com.cn"));
+        assert!(is_allowed_auth_navigation("graph.renren.com"));
+        // 其他一律拒绝
+        assert!(!is_allowed_auth_navigation("example.com"));
+        assert!(!is_allowed_auth_navigation("evilbaicizhan.com"));
+        assert!(!is_allowed_auth_navigation("evil-weixin.qq.com.attacker.com"));
+        assert!(!is_allowed_auth_navigation("weixin.qq.com.evil.com"));
+        assert!(!is_allowed_auth_navigation(""));
     }
 
     #[test]

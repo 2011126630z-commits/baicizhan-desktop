@@ -104,12 +104,9 @@ export function HomePage() {
       {sessionState === "logged_out" && (
         <div className="banner info">
           <LogIn size={16} />
-          <span>
-            百词斩官方网页当前未提供 PC 登录入口（应用内实测，详见 docs/official-web-capabilities.md）；
-            本地词书、背词、复习、统计功能完整可用。
-          </span>
+          <span>登录百词斩账号可尝试同步官方学习数据；未登录也可以使用本地词书学习。</span>
           <button className="btn" style={{ marginLeft: "auto" }} onClick={() => navigate("/settings?section=account")}>
-            查看详情
+            去登录
           </button>
         </div>
       )}

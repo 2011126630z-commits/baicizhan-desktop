@@ -1,6 +1,6 @@
 [package]
 name = "baicizhan-desktop"
-version = "0.2.0"
+version = "0.2.1"
 description = "百词斩桌面版（非官方）- 个人学习工具"
 authors = ["personal"]
 edition = "2021"
