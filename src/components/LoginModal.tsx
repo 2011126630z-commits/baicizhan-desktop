@@ -11,13 +11,29 @@ export function LoginModal({ open, onClose }: { open: boolean; onClose: () => vo
   const [confirming, setConfirming] = useState(false);
 
   return (
-    <Modal open={open} title="官方登录流程" onClose={onClose} width={490}>
+    <Modal open={open} title="官方登录流程" onClose={onClose} width={520}>
       <ol style={{ fontSize: 13.5, color: "var(--text-2)", paddingLeft: 20, lineHeight: 2 }}>
-        <li>已为你打开百词斩官方网页登录窗口</li>
-        <li>请在官方页面中完成登录（账号密码 / 扫码 / 短信，均由官方处理）</li>
+        <li>已为你打开百词斩官方网站（www.baicizhan.com）</li>
+        <li>如果你在官方页面看到登录入口，请在官方页面完成登录（账号密码 / 扫码 / 短信，均由官方处理）</li>
         <li>登录成功后，回到这里点击「我已完成登录」</li>
       </ol>
-      <p style={{ fontSize: 12, color: "var(--text-3)", margin: "10px 0 16px", lineHeight: 1.7 }}>
+      <div
+        style={{
+          fontSize: 12,
+          color: "var(--warn)",
+          background: "rgba(232, 89, 12, 0.08)",
+          borderRadius: 8,
+          padding: "8px 12px",
+          margin: "10px 0",
+          lineHeight: 1.8,
+        }}
+      >
+        实测说明（2026-10-07）：百词斩官方网站当前仅提供 App 下载与词书展示，
+        <strong>未提供 PC 网页登录入口</strong>。如果你在官方页面找不到登录按钮，
+        说明官方尚未开放网页端登录 —— 这是官方产品形态限制，与本程序无关，
+        桌面版的本地学习功能不受任何影响。
+      </div>
+      <p style={{ fontSize: 12, color: "var(--text-3)", margin: "0 0 16px", lineHeight: 1.7 }}>
         桌面版不读取、不记录、不上传你的密码；只保存登录后的会话（Windows 凭据管理器加密存储）。
         捕获会话后程序会携带会话访问官方页面<strong>验证账号身份</strong>——
         若无法验证，将如实显示「会话待验证」，不会显示为已登录。
