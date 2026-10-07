@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+src-tauri/target/
+src-tauri/gen/schemas/
+
+# Installers (published to GitHub Releases, not committed)
+releases/*.exe
+releases/*.msi
+
+# Logs
+logs/*.log
+logs/*.log.*
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Env
+.env
+.env.local

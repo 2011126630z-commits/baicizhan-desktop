@@ -1,0 +1,35 @@
+[package]
+name = "baicizhan-desktop"
+version = "0.1.0"
+description = "百词斩桌面版（非官方）- 个人学习工具"
+authors = ["personal"]
+edition = "2021"
+
+[lib]
+name = "baicizhan_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-log = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+keyring = { version = "3", features = ["windows-native"] }
+reqwest = { version = "0.12", features = ["json"] }
+url = "2"
+chrono = "0.4"
+log = "0.4"
+tts = "0.26"
+
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 1
