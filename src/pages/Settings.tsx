@@ -167,7 +167,69 @@ function AccountSection() {
       </SectionCard>
 
       <LoginModal open={loginModal} onClose={() => setLoginModal(false)} />
+      <WechatOAuthDebug />
     </>
+  );
+}
+
+/** 微信 OAuth 调试信息（导航到微信授权页时由 Rust 端捕获，仅参数结构，无凭据） */
+function WechatOAuthDebug() {
+  const [info, setInfo] = useState<Record<string, unknown> | null>(null);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    void api.settingsAll().then((all) => {
+      if (!alive) return;
+      const raw = all.find(([k]) => k === "auth.wechatOAuthDebug")?.[1];
+      if (raw) {
+        try {
+          setInfo(JSON.parse(raw));
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  if (!info) return null;
+  const row = (label: string, value: unknown, mono = true) => (
+    <div style={{ display: "flex", gap: 10, padding: "3px 0", fontSize: 12 }}>
+      <span style={{ color: "var(--text-3)", minWidth: 130, flexShrink: 0 }}>{label}</span>
+      <span style={{ wordBreak: "break-all", fontFamily: mono ? "Consolas, monospace" : undefined }}>
+        {String(value ?? "—")}
+      </span>
+    </div>
+  );
+
+  return (
+    <SectionCard title="微信 OAuth 调试（对照测试用）">
+      <p style={{ fontSize: 12, color: "var(--text-3)", marginBottom: 8, lineHeight: 1.7 }}>
+        以下信息在登录窗口导航到微信授权页时自动捕获（仅参数结构；state 仅记录前 8 位）。
+        用途：与标准浏览器对照，确认客户端未修改 OAuth 参数。
+      </p>
+      <button className="btn" onClick={() => setOpen(!open)} style={{ marginBottom: open ? 10 : 0 }}>
+        {open ? "收起调试信息" : "展开调试信息"}
+      </button>
+      {open && (
+        <div>
+          {row("来源页面", info.sourcePage)}
+          {row("OAuth Host", info.oAuthHost)}
+          {row("appid", info.appid)}
+          {row("redirect_uri 原始值", info.redirectUriRaw)}
+          {row("redirect_uri Decode 后", info.redirectUriDecoded)}
+          {row("response_type", info.responseType)}
+          {row("scope", info.scope)}
+          {row("state（前8位/长度）", `${info.statePreview ?? ""}…(${info.stateLength ?? 0})`)}
+          {row("是否二次编码", info.doubleEncoded ? "YES ⚠" : "NO")}
+          {row("客户端是否修改", info.clientModified ? "YES ⚠" : "NO（原样传递）")}
+          {row("捕获时间", info.capturedAt ? new Date(Number(info.capturedAt) * 1000).toLocaleString("zh-CN") : "—")}
+        </div>
+      )}
+    </SectionCard>
   );
 }
 

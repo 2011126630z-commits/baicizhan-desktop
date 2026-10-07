@@ -84,7 +84,16 @@ GET https://www.baicizhan.com/auth/weixin
 
 > 待用户在官方页面完成一次真实登录后，本节将补充实测的 Cookie 元数据与身份标记结果。
 
-## 四、结论速览
+## 四、Tauri 权限与窗口处理核查（2026-10-08）
+
+| 检查项 | 结论 |
+| --- | --- |
+| 登录窗口创建方式 | 由 **Rust 端** `WebviewWindowBuilder` 创建 → 不需要前端 `core:webview:allow-create-webview-window` 权限 |
+| 微信登录按钮行为 | 普通 `<a href="/auth/weixin">` 导航（**无** `target=_blank`、**无** `window.open`、**无** onclick）→ 不需要额外弹出窗口权限 |
+| capabilities 权限集 | 保持最小集（窗口 hide/show/focus/close、autostart、notification、log、opener、event）；未新增无关权限 |
+| OAuth 调试捕获 | 通过 `on_navigation` 记录参数结构（写入本地 settings）；URL 原样传递，不做任何重写 |
+
+## 五、结论速览
 
 | 项目 | 状态 |
 | --- | --- |

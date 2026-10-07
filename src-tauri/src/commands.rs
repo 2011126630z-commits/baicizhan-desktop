@@ -402,6 +402,60 @@ pub async fn verify_session(http: State<'_, HttpState>) -> Result<http_client::S
 // 注意：凡是在命令里创建/操作 WebviewWindow 的都必须用 async 命令，
 // 因为同步命令运行在主线程，builder.build() 会在主线程等待自身从而死锁。
 
+/// 简单 percent-decode（用于展示 redirect_uri 解码后的值；不处理 + 号）
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// 捕获微信 OAuth 调试信息（仅参数结构；URL 中不含 Cookie/密码/code）；
+/// state 只记录长度与前 8 位（CSRF 一次性值，不完整留存）。
+fn capture_wechat_oauth_debug(app: &AppHandle, url: &tauri::Url) {
+    let query: std::collections::HashMap<String, String> = url
+        .query_pairs()
+        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+        .collect();
+    let redirect_raw = query.get("redirect_uri").cloned().unwrap_or_default();
+    let decoded = percent_decode(&redirect_raw);
+    let double_encoded = redirect_raw.contains("%253A") || redirect_raw.contains("%252F");
+    let state_preview = query
+        .get("state")
+        .map(|s| s.chars().take(8).collect::<String>())
+        .unwrap_or_default();
+    let info = serde_json::json!({
+        "sourcePage": http_client::official_login_url(),
+        "oAuthHost": url.host_str().unwrap_or_default(),
+        "appid": query.get("appid").cloned().unwrap_or_default(),
+        "redirectUriRaw": redirect_raw,
+        "redirectUriDecoded": decoded,
+        "responseType": query.get("response_type").cloned().unwrap_or_default(),
+        "scope": query.get("scope").cloned().unwrap_or_default(),
+        "statePreview": state_preview,
+        "stateLength": query.get("state").map(|s| s.len()).unwrap_or(0),
+        "doubleEncoded": double_encoded,
+        "clientModified": false,
+        "capturedAt": chrono::Utc::now().timestamp(),
+    });
+    if let Some(db) = app.try_state::<Db>() {
+        if let Ok(conn) = db.0.lock() {
+            db::settings_set(&conn, "auth.wechatOAuthDebug", &info.to_string());
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn open_login_window(app: AppHandle) -> Result<(), String> {
     if let Some(w) = app.get_webview_window("login") {
@@ -413,6 +467,7 @@ pub async fn open_login_window(app: AppHandle) -> Result<(), String> {
     let url: tauri::Url = http_client::official_login_url()
         .parse()
         .map_err(|e| format!("{e}"))?;
+    let app_for_nav = app.clone();
     tauri::WebviewWindowBuilder::new(&app, "login", tauri::WebviewUrl::External(url))
         .title("百词斩 · 官方登录（请在官方页面完成登录）")
         .inner_size(1020.0, 780.0)
@@ -420,11 +475,15 @@ pub async fn open_login_window(app: AppHandle) -> Result<(), String> {
         .resizable(true)
         // 认证导航白名单：只允许官方域与已知 OAuth 提供方页面；
         // 与 Cookie 白名单严格独立（第三方域永远拿不到百词斩 Cookie）。
-        .on_navigation(|u| {
+        .on_navigation(move |u| {
             let host = u.host_str().unwrap_or_default();
             let ok = http_client::is_allowed_auth_navigation(host);
             if !ok {
                 log::warn!("login window blocked navigation to non-auth host: {host}");
+            }
+            // 微信 OAuth 调试：记录参数结构（用于对照测试，不含凭据）
+            if host.ends_with("weixin.qq.com") && u.path().contains("connect") {
+                capture_wechat_oauth_debug(&app_for_nav, u);
             }
             ok
         })

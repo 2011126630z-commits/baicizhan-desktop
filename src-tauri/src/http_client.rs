@@ -478,17 +478,28 @@ const LOGGED_IN_MARKERS: &[&str] = &[
     "logout",
 ];
 
+/// 未登录特征标记（/hello 应用页在未登录时呈现"已有账号? 点此登录"）
 const LOGGED_OUT_MARKERS: &[&str] = &[
+    "点此登录",
     "立即登录",
     "登录/注册",
     "注册/登录",
     "请先登录",
     "去登录",
+    "已有账号",
     "passport.baicizhan.com/login",
 ];
 
+/// 认证/身份探测页面（按顺序尝试）：
+/// 1) /hello —— 官方网页应用页（含登录态相关的"点此登录"入口）；
+/// 2) / —— 首页（兜底）。
+const PROBE_URLS: &[&str] = &[
+    OFFICIAL_HELLO_URL,
+    OFFICIAL_ORIGIN,
+];
+
 /// 登录状态探测（只使用官方网页的正常访问流程）：
-/// 1) 携带会话访问官方首页；
+/// 1) 携带会话依次访问应用页与首页；
 /// 2) 检查是否被重定向到登录域；
 /// 3) 检查响应中的登录/未登录特征标记。
 /// 找不到可靠证据时返回 unverified —— 语义为“会话已捕获，身份未验证”，
@@ -515,74 +526,94 @@ pub async fn probe_session(state: &HttpState) -> SessionProbeResult {
         return result;
     }
 
-    let url = match Url::parse(OFFICIAL_ORIGIN) {
-        Ok(u) => u,
-        Err(_) => {
-            result.verdict = "failed".into();
-            result.note = "官方地址解析失败".into();
+    // 依次探测 /hello 与首页，任一页面给出可靠信号即采纳
+    let mut last_note = String::from("会话已捕获，但官方页面未提供可验证身份的标记，暂无法证明账号身份");
+    for probe_url in PROBE_URLS {
+        let url = match Url::parse(probe_url) {
+            Ok(u) => u,
+            Err(_) => continue,
+        };
+        let host = url.host_str().unwrap_or_default().to_string();
+        let path = url.path().to_string();
+        let cookie_header = {
+            let cookies = state.cookies.lock().unwrap();
+            cookie_header_for(&cookies, &host, &path)
+        };
+        let mut req = state.client.get(url.clone());
+        if let Some(h) = cookie_header {
+            req = req.header(reqwest::header::COOKIE, h);
+        }
+        req = req.header(reqwest::header::ACCEPT, "text/html,application/xhtml+xml");
+
+        let resp = match req.send().await {
+            Ok(r) => r,
+            Err(e) => {
+                let msg = classify_reqwest_err(&e);
+                if e.is_connect() || e.is_timeout() {
+                    result.verdict = "offline".into();
+                    result.note = msg;
+                    return result;
+                }
+                last_note = msg;
+                continue;
+            }
+        };
+
+        result.http_status = Some(resp.status().as_u16());
+        let final_url = resp.url().clone();
+        let final_host = final_url.host_str().unwrap_or_default().to_string();
+        result.final_host = Some(final_host.clone());
+        let redirected = final_host.starts_with("passport.")
+            || final_url.path().to_ascii_lowercase().contains("login");
+
+        let html = resp.text().await.unwrap_or_default();
+        let in_markers: Vec<String> = LOGGED_IN_MARKERS
+            .iter()
+            .filter(|m| html.contains(**m))
+            .map(|m| (*m).to_string())
+            .collect();
+        let out_markers: Vec<String> = LOGGED_OUT_MARKERS
+            .iter()
+            .filter(|m| html.contains(**m))
+            .map(|m| (*m).to_string())
+            .collect();
+        // 合并到结果（供 UI 展示，全部标记均来自真实响应）
+        for m in &in_markers {
+            if !result.logged_in_markers.contains(m) {
+                result.logged_in_markers.push(m.clone());
+            }
+        }
+        for m in &out_markers {
+            if !result.logged_out_markers.contains(m) {
+                result.logged_out_markers.push(m.clone());
+            }
+        }
+
+        if redirected {
+            result.redirected_to_login = true;
+            result.verdict = "not_logged_in".into();
+            result.note = "访问官方页面时被重定向到登录入口，会话可能已失效".into();
             return result;
         }
-    };
-
-    let host = url.host_str().unwrap_or_default().to_string();
-    let path = url.path().to_string();
-    let cookie_header = {
-        let cookies = state.cookies.lock().unwrap();
-        cookie_header_for(&cookies, &host, &path)
-    };
-    let mut req = state.client.get(url.clone());
-    if let Some(h) = cookie_header {
-        req = req.header(reqwest::header::COOKIE, h);
-    }
-    req = req.header(reqwest::header::ACCEPT, "text/html,application/xhtml+xml");
-
-    let resp = match req.send().await {
-        Ok(r) => r,
-        Err(e) => {
-            let msg = classify_reqwest_err(&e);
-            result.verdict = if e.is_connect() || e.is_timeout() {
-                "offline".into()
-            } else {
-                "failed".into()
-            };
-            result.note = msg;
+        // 以 /hello 的未登录入口标记作为强信号（登录后该入口不再出现）
+        if !out_markers.is_empty() && in_markers.is_empty() {
+            result.verdict = "not_logged_in".into();
+            result.note = format!(
+                "官方页面呈现未登录入口（{}），当前会话不代表已登录账号",
+                out_markers.join("、")
+            );
             return result;
         }
-    };
-
-    result.http_status = Some(resp.status().as_u16());
-    let final_url = resp.url().clone();
-    let final_host = final_url.host_str().unwrap_or_default().to_string();
-    result.final_host = Some(final_host.clone());
-    result.redirected_to_login = final_host.starts_with("passport.")
-        || final_url.path().to_ascii_lowercase().contains("login");
-
-    let html = resp.text().await.unwrap_or_default();
-    result.logged_in_markers = LOGGED_IN_MARKERS
-        .iter()
-        .filter(|m| html.contains(**m))
-        .map(|m| (*m).to_string())
-        .collect();
-    result.logged_out_markers = LOGGED_OUT_MARKERS
-        .iter()
-        .filter(|m| html.contains(**m))
-        .map(|m| (*m).to_string())
-        .collect();
-
-    if result.redirected_to_login {
-        result.verdict = "not_logged_in".into();
-        result.note = "访问官方页面时被重定向到登录入口，会话可能已失效".into();
-    } else if !result.logged_in_markers.is_empty() && result.logged_out_markers.is_empty() {
-        result.verdict = "verified".into();
-        result.note = "官方页面返回了登录用户特征".into();
-    } else if !result.logged_out_markers.is_empty() && result.logged_in_markers.is_empty() {
-        result.verdict = "not_logged_in".into();
-        result.note = "官方页面呈现未登录状态入口".into();
-    } else {
-        result.verdict = "unverified".into();
-        result.note =
-            "会话已捕获，但官方 SPA 页面未提供可验证身份的标记，暂无法证明账号身份".into();
+        if !in_markers.is_empty() && out_markers.is_empty() {
+            result.verdict = "verified".into();
+            result.note = format!("官方页面返回登录用户特征：{}", in_markers.join("、"));
+            return result;
+        }
+        // 两页探测都无明显信号时继续下一个
     }
+
+    result.verdict = "unverified".into();
+    result.note = last_note;
     result
 }
 
