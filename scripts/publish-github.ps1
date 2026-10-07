@@ -22,12 +22,17 @@ Write-Output "已登录：$user"
 Push-Location (Join-Path $PSScriptRoot "..")
 
 Write-Output "==> 创建/获取仓库 $RepoName"
-& $gh repo view "$user/$RepoName" 2>$null | Out-Null
-if ($LASTEXITCODE -ne 0) {
+# 仓库/Release 不存在时 gh 返回非零退出码，属预期路径：临时放宽错误策略，避免脚本被终止
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+& $gh repo view "$user/$RepoName" *> $null
+$repoExists = ($LASTEXITCODE -eq 0)
+if (-not $repoExists) {
   & $gh repo create $RepoName --public --description "百词斩桌面版（非官方 Windows 客户端）· Tauri 2 + React + Rust" --source . --push
 } else {
   git push -u origin main
 }
+$ErrorActionPreference = $prevEap
 
 Write-Output "==> 创建 Release v$Version 并上传安装包"
 $tag = "v$Version"
@@ -53,8 +58,11 @@ Windows 桌面背单词客户端。**非百词斩官方客户端**，仅供个�
 详见 README 与 docs/capabilities.md。
 "@
 
-& $gh release view $tag 2>$null | Out-Null
-if ($LASTEXITCODE -eq 0) {
+$ErrorActionPreference = "Continue"
+& $gh release view $tag *> $null
+$releaseExists = ($LASTEXITCODE -eq 0)
+$ErrorActionPreference = $prevEap
+if ($releaseExists) {
   Write-Output "Release $tag 已存在，上传/覆盖安装包"
   & $gh release upload $tag --clobber "releases\BaicizhanDesktop_Setup_x64.exe"
 } else {
