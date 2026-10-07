@@ -1,4 +1,4 @@
-param([string]$OutPath = "D:\Baicizhan-PC\logs\screenshot.png")
+﻿param([string]$OutPath = "D:\Baicizhan-PC\logs\screenshot.png")
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds

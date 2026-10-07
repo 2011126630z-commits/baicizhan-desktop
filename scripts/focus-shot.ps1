@@ -1,4 +1,4 @@
-param([string]$OutPath = "D:\Baicizhan-PC\logs\shot.png")
+﻿param([string]$OutPath = "D:\Baicizhan-PC\logs\shot.png")
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 Add-Type @"

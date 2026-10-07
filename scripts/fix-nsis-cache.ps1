@@ -1,4 +1,4 @@
-# Rebuild Tauri NSIS bundler cache using GitHub mirrors with resume + retries
+﻿# Rebuild Tauri NSIS bundler cache using GitHub mirrors with resume + retries
 $ErrorActionPreference = "Continue"
 $nsis = Join-Path $env:LOCALAPPDATA "tauri\NSIS"
 $mirrors = @(

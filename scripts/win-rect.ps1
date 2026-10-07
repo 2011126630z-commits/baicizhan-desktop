@@ -1,4 +1,4 @@
-param()
+﻿param()
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;

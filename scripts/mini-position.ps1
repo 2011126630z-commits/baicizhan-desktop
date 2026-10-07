@@ -1,4 +1,4 @@
-param(
+﻿param(
   [Parameter(Mandatory=$true)][int]$Hwnd,
   [int]$X = 700,
   [int]$Y = 380,

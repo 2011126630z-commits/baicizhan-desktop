@@ -1,4 +1,4 @@
-# 一键发布到 GitHub（需先完成 gh auth login）
+﻿# 一键发布到 GitHub（需先完成 gh auth login）
 # 用法：powershell -ExecutionPolicy Bypass -File scripts\publish-github.ps1
 param(
   [string]$RepoName = "baicizhan-desktop",

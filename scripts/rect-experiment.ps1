@@ -1,4 +1,4 @@
-param([string]$Out1 = "D:\Baicizhan-PC\logs\rect-restore.png", [string]$Out2 = "D:\Baicizhan-PC\logs\rect-max.png")
+﻿param([string]$Out1 = "D:\Baicizhan-PC\logs\rect-restore.png", [string]$Out2 = "D:\Baicizhan-PC\logs\rect-max.png")
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 Add-Type @"

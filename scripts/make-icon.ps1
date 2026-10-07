@@ -1,4 +1,4 @@
-param([string]$OutPath = "D:\Baicizhan-PC\scripts\appicon.png")
+﻿param([string]$OutPath = "D:\Baicizhan-PC\scripts\appicon.png")
 
 Add-Type -AssemblyName System.Drawing
 

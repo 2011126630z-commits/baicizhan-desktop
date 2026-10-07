@@ -1,4 +1,4 @@
-param(
+﻿param(
   [Parameter(Mandatory=$true)][int]$Hwnd,
   [string]$OutPath = "D:\Baicizhan-PC\logs\shot-front.png"
 )

@@ -1,4 +1,4 @@
-param([int]$TargetPid = 0)
+﻿param([int]$TargetPid = 0)
 Add-Type @"
 using System;
 using System.Collections.Generic;

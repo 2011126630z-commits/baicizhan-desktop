@@ -1,4 +1,4 @@
-param(
+﻿param(
   [Parameter(Mandatory=$true)][string]$Clicks,   # "x1,y1;x2,y2;..."
   [string]$Keys = "",
   [string]$OutPath = ""
