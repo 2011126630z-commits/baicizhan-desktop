@@ -26,3 +26,4 @@ Thumbs.db
 .env.local
 logs/*.html
 logs/*.ps1
+logs/*.js
